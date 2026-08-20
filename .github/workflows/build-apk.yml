@@ -1,13 +1,9 @@
 name: Build Android APK
 
 on:
-  push:
-    branches:
-      - chatgpt-apk-build
   pull_request:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   build:
