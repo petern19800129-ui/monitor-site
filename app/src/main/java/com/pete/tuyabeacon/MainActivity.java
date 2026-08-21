@@ -28,32 +28,29 @@ import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final int REQ_BT = 1001;
-    private static final byte[] BODY_OFF = hex("8D21A3CC2B274044AD19D5E6CB6EFFAFE8");
-    private static final byte[] BODY_ON  = hex("C077FC43F921BACD2CB276B9464BF8E58B");
-    private static final byte[] PREFIX = hex("0B6E51000200");
+
+    // Exact service-UUID payloads captured from Smart Life/Tuya Smart.
+    // These are intentionally NOT modified or re-checksummed.
+    private static final byte[] EXACT_OFF_B4 = hex("0B6E51000200B4058D21A3CC2B274044AD19D5E6CB6EFFAFE8C4");
+    private static final byte[] EXACT_ON_B5  = hex("0B6E51000200B505C077FC43F921BACD2CB276B9464BF8E58BEB");
 
     private BluetoothAdapter adapter;
     private BluetoothLeAdvertiser advertiser;
     private final List<AdvertiseCallback> callbacks = new ArrayList<>();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView status;
-    private TextView seqView;
-    private int sequence;
     private int startedCount;
     private int failedCount;
     private String currentName = "";
-    private int currentSeq;
     private String currentPacket = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        sequence = getPreferences(MODE_PRIVATE).getInt("sequence", 0xC0) & 0xFF;
         BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager != null ? manager.getAdapter() : null;
         buildUi();
         requestBtPermissions();
-        refreshStatus();
     }
 
     private void buildUi() {
@@ -64,24 +61,26 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
-        title.setText("Bluetooth Bulb Test v0.2");
+        title.setText("Bluetooth Bulb Test v0.3");
         title.setTextSize(27f);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView sub = new TextView(this);
-        sub.setText("Tuya Beacon replay — dual 3-second advertising");
+        sub.setText("Exact captured Tuya Beacon replay test");
         sub.setTextSize(15f);
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
         subLp.topMargin = dp(8);
         root.addView(sub, subLp);
 
-        seqView = new TextView(this);
-        seqView.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams seqLp = new LinearLayout.LayoutParams(-1, -2);
-        seqLp.topMargin = dp(24);
-        root.addView(seqView, seqLp);
+        TextView info = new TextView(this);
+        info.setText("This version replays the ORIGINAL packets byte-for-byte:\nOFF = sequence B4   •   ON = sequence B5");
+        info.setGravity(Gravity.CENTER);
+        info.setTextSize(15f);
+        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-1, -2);
+        infoLp.topMargin = dp(24);
+        root.addView(info, infoLp);
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -90,47 +89,35 @@ public class MainActivity extends Activity {
         root.addView(row, rowLp);
 
         Button off = new Button(this);
-        off.setText("OFF");
-        off.setTextSize(22f);
-        off.setOnClickListener(v -> sendCommand("OFF", BODY_OFF));
+        off.setText("REPLAY OFF B4");
+        off.setTextSize(18f);
+        off.setOnClickListener(v -> sendExact("OFF B4", EXACT_OFF_B4));
         row.addView(off, new LinearLayout.LayoutParams(0, dp(80), 1f));
 
         View gap = new View(this);
         row.addView(gap, new LinearLayout.LayoutParams(dp(12), 1));
 
         Button on = new Button(this);
-        on.setText("ON");
-        on.setTextSize(22f);
-        on.setOnClickListener(v -> sendCommand("ON", BODY_ON));
+        on.setText("REPLAY ON B5");
+        on.setTextSize(18f);
+        on.setOnClickListener(v -> sendExact("ON B5", EXACT_ON_B5));
         row.addView(on, new LinearLayout.LayoutParams(0, dp(80), 1f));
 
-        Button reset = new Button(this);
-        reset.setText("Reset next sequence to C0");
-        reset.setOnClickListener(v -> {
-            stopActive();
-            sequence = 0xC0;
-            saveSequence();
-            updateSequenceView();
-            status.setText("Sequence reset to C0");
-        });
-        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(-1, -2);
-        resetLp.topMargin = dp(16);
-        root.addView(reset, resetLp);
-
         status = new TextView(this);
-        status.setTextSize(14f);
+        status.setText("Ready. Power-cycle the bulb, force-stop Smart Life, then try REPLAY ON B5 first.");
         status.setGravity(Gravity.CENTER);
+        status.setTextSize(14f);
         status.setTextIsSelectable(true);
         LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
-        statusLp.topMargin = dp(24);
+        statusLp.topMargin = dp(28);
         root.addView(status, statusLp);
 
         TextView note = new TextView(this);
-        note.setText("Force-stop Smart Life/Tuya Smart first. Tap once, then wait at least 4 seconds before the next button.");
-        note.setTextSize(14f);
+        note.setText("Important: Tuya documents anti-replay and command integrity. This is only a diagnostic. If the bulb rejects the old B4/B5 sequence numbers, the proper controller must generate fresh encrypted packets using the Beacon key.");
         note.setGravity(Gravity.CENTER);
+        note.setTextSize(14f);
         LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
-        noteLp.topMargin = dp(28);
+        noteLp.topMargin = dp(30);
         root.addView(note, noteLp);
 
         setContentView(root);
@@ -153,7 +140,7 @@ public class MainActivity extends Activity {
                  checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED);
     }
 
-    private void sendCommand(String name, byte[] body) {
+    private void sendExact(String name, byte[] serviceBytes) {
         if (!hasBtPermissions()) {
             requestBtPermissions();
             status.setText("Allow Nearby devices / Bluetooth permission first.");
@@ -179,10 +166,7 @@ public class MainActivity extends Activity {
         }
 
         stopActive();
-
         currentName = name;
-        currentSeq = sequence & 0xFF;
-        byte[] serviceBytes = buildServiceBytes(currentSeq, body);
         currentPacket = toHex(serviceBytes);
         startedCount = 0;
         failedCount = 0;
@@ -195,15 +179,9 @@ public class MainActivity extends Activity {
                 .setTimeout(3000)
                 .build();
 
-        status.setText(String.format(Locale.US,
-                "%s seq %02X: starting 2 advertisers...\n%s", currentName, currentSeq, currentPacket));
-
+        status.setText(currentName + ": starting 2 advertisers...\n" + currentPacket);
         startOne(settings, data, 1);
         handler.postDelayed(() -> startOne(settings, data, 2), 20);
-
-        sequence = (sequence + 1) & 0xFF;
-        saveSequence();
-        updateSequenceView();
     }
 
     private AdvertiseData buildAdvertiseData(byte[] serviceBytes) {
@@ -222,18 +200,15 @@ public class MainActivity extends Activity {
     private void startOne(AdvertiseSettings settings, AdvertiseData data, int number) {
         if (advertiser == null) return;
         AdvertiseCallback cb = new AdvertiseCallback() {
-            @Override
-            public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+            @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
                 startedCount++;
                 updateResult();
             }
-
-            @Override
-            public void onStartFailure(int errorCode) {
+            @Override public void onStartFailure(int errorCode) {
                 failedCount++;
                 status.setText(String.format(Locale.US,
-                        "%s seq %02X: advertiser %d failed (error %d); started %d/2\n%s",
-                        currentName, currentSeq, number, errorCode, startedCount, currentPacket));
+                        "%s: advertiser %d failed (error %d), started %d/2\n%s",
+                        currentName, number, errorCode, startedCount, currentPacket));
             }
         };
         callbacks.add(cb);
@@ -247,8 +222,8 @@ public class MainActivity extends Activity {
 
     private void updateResult() {
         status.setText(String.format(Locale.US,
-                "%s seq %02X: %d/2 advertisers started for 3 seconds%s\n%s",
-                currentName, currentSeq, startedCount,
+                "%s: %d/2 advertisers started for 3 seconds%s\n%s",
+                currentName, startedCount,
                 failedCount > 0 ? " (" + failedCount + " failed)" : "",
                 currentPacket));
     }
@@ -263,46 +238,7 @@ public class MainActivity extends Activity {
         callbacks.clear();
     }
 
-    private static byte[] buildServiceBytes(int seq, byte[] body) {
-        byte[] checksumInput = new byte[19];
-        checksumInput[0] = (byte) seq;
-        checksumInput[1] = 0x05;
-        System.arraycopy(body, 0, checksumInput, 2, 17);
-        byte checksum = (byte) (crc8Poly07(checksumInput) ^ 0xB8);
-        byte[] out = new byte[26];
-        System.arraycopy(PREFIX, 0, out, 0, 6);
-        out[6] = (byte) seq;
-        out[7] = 0x05;
-        System.arraycopy(body, 0, out, 8, 17);
-        out[25] = checksum;
-        return out;
-    }
-
-    private static int crc8Poly07(byte[] data) {
-        int crc = 0;
-        for (byte value : data) {
-            crc ^= value & 0xFF;
-            for (int bit = 0; bit < 8; bit++)
-                crc = (crc & 0x80) != 0 ? ((crc << 1) ^ 0x07) & 0xFF : (crc << 1) & 0xFF;
-        }
-        return crc;
-    }
-
-    private void refreshStatus() {
-        updateSequenceView();
-        if (status != null) status.setText("Ready. Force-stop Smart Life, then try OFF.");
-    }
-
-    private void updateSequenceView() {
-        if (seqView != null) seqView.setText(String.format(Locale.US, "Next sequence: %02X", sequence & 0xFF));
-    }
-
-    private void saveSequence() {
-        getPreferences(MODE_PRIVATE).edit().putInt("sequence", sequence & 0xFF).apply();
-    }
-
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         stopActive();
         super.onDestroy();
     }
