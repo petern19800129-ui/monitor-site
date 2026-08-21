@@ -29,14 +29,14 @@ import java.util.UUID;
 public class MainActivity extends Activity {
     private static final int REQ_BT = 1001;
 
-    // Fresh capture after re-pairing. The capture ended at outer sequence 0x41.
-    // v0.4 deliberately starts at the next sequence, 0x42, while reusing
-    // encrypted 17-byte bodies captured earlier in the same pairing session.
     private static final byte[] PREFIX = hex("0B6E51000401");
-    private static final byte[] BODY_A = hex("D772E30583C975D22FA01AD641374B42BD"); // captured at seq 38
-    private static final byte[] BODY_B = hex("9CBB7F76AFD5E5021CBB91BA7801C6656B"); // captured at seq 3A
-    private static final byte[] BODY_C = hex("C0CD0F34F45F6C1E37B3ED67E5A224CE83"); // captured at seq 3C
-    private static final byte[] BODY_D = hex("32343A8846554727C0C44DAAE70C9C4905"); // captured at seq 3F
+    private static final byte[] BODY_RED  = hex("D772E30583C975D22FA01AD641374B42BD");
+    private static final byte[] BODY_BLUE = hex("C0CD0F34F45F6C1E37B3ED67E5A224CE83");
+
+    private static final int RESYNC_START = 0x45;
+    private static final int RESYNC_END   = 0x63;
+    private static final int RESYNC_ADV_MS = 700;
+    private static final int RESYNC_STEP_MS = 900;
 
     private BluetoothAdapter adapter;
     private BluetoothLeAdvertiser advertiser;
@@ -45,17 +45,21 @@ public class MainActivity extends Activity {
 
     private TextView status;
     private TextView seqView;
-    private int sequence;
+    private Button resyncButton;
+    private Button redButton;
+    private Button blueButton;
+
+    private int sequence = 0x64;
     private int startedCount;
     private int failedCount;
     private String currentName = "";
     private int currentSeq;
     private String currentPacket = "";
+    private boolean resyncRunning = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        sequence = getPreferences(MODE_PRIVATE).getInt("sequence_v04", 0x42) & 0xFF;
         BluetoothManager manager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = manager != null ? manager.getAdapter() : null;
         buildUi();
@@ -71,13 +75,13 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
-        title.setText("Bluetooth Bulb Test v0.4");
+        title.setText("Bluetooth Bulb Test v0.5");
         title.setTextSize(27f);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView sub = new TextView(this);
-        sub.setText("Fresh-sequence encrypted-body reuse test");
+        sub.setText("Tuya Beacon sequence re-sync test");
         sub.setTextSize(15f);
         sub.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(-1, -2);
@@ -85,11 +89,11 @@ public class MainActivity extends Activity {
         root.addView(sub, subLp);
 
         TextView info = new TextView(this);
-        info.setText("Your re-pairing log ended at sequence 41.\nThis app starts at the next value: 42.");
+        info.setText("RED and BLUE are confirmed command bodies.\nRESYNC walks 45 → 63 in order, then leaves next sequence at 64.");
         info.setGravity(Gravity.CENTER);
         info.setTextSize(15f);
         LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-1, -2);
-        infoLp.topMargin = dp(20);
+        infoLp.topMargin = dp(18);
         root.addView(info, infoLp);
 
         seqView = new TextView(this);
@@ -99,38 +103,37 @@ public class MainActivity extends Activity {
         seqLp.topMargin = dp(18);
         root.addView(seqView, seqLp);
 
-        LinearLayout row1 = new LinearLayout(this);
-        row1.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams row1Lp = new LinearLayout.LayoutParams(-1, -2);
-        row1Lp.topMargin = dp(22);
-        root.addView(row1, row1Lp);
+        resyncButton = new Button(this);
+        resyncButton.setText("RESYNC 45 → 63");
+        resyncButton.setTextSize(19f);
+        resyncButton.setOnClickListener(v -> startResync());
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(-1, dp(78));
+        rlp.topMargin = dp(22);
+        root.addView(resyncButton, rlp);
 
-        Button a = makeButton("TEST A\n(captured 38)");
-        a.setOnClickListener(v -> sendFresh("TEST A / body 38", BODY_A));
-        row1.addView(a, new LinearLayout.LayoutParams(0, dp(82), 1f));
-        View gap1 = new View(this);
-        row1.addView(gap1, new LinearLayout.LayoutParams(dp(12), 1));
-        Button b = makeButton("TEST B\n(captured 3A)");
-        b.setOnClickListener(v -> sendFresh("TEST B / body 3A", BODY_B));
-        row1.addView(b, new LinearLayout.LayoutParams(0, dp(82), 1f));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.topMargin = dp(14);
+        root.addView(row, rowLp);
 
-        LinearLayout row2 = new LinearLayout(this);
-        row2.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams row2Lp = new LinearLayout.LayoutParams(-1, -2);
-        row2Lp.topMargin = dp(12);
-        root.addView(row2, row2Lp);
+        redButton = new Button(this);
+        redButton.setText("RED");
+        redButton.setTextSize(20f);
+        redButton.setOnClickListener(v -> sendNormal("RED", BODY_RED));
+        row.addView(redButton, new LinearLayout.LayoutParams(0, dp(78), 1f));
 
-        Button c = makeButton("TEST C\n(captured 3C)");
-        c.setOnClickListener(v -> sendFresh("TEST C / body 3C", BODY_C));
-        row2.addView(c, new LinearLayout.LayoutParams(0, dp(82), 1f));
-        View gap2 = new View(this);
-        row2.addView(gap2, new LinearLayout.LayoutParams(dp(12), 1));
-        Button d = makeButton("TEST D\n(captured 3F)");
-        d.setOnClickListener(v -> sendFresh("TEST D / body 3F", BODY_D));
-        row2.addView(d, new LinearLayout.LayoutParams(0, dp(82), 1f));
+        View gap = new View(this);
+        row.addView(gap, new LinearLayout.LayoutParams(dp(12), 1));
+
+        blueButton = new Button(this);
+        blueButton.setText("BLUE");
+        blueButton.setTextSize(20f);
+        blueButton.setOnClickListener(v -> sendNormal("BLUE", BODY_BLUE));
+        row.addView(blueButton, new LinearLayout.LayoutParams(0, dp(78), 1f));
 
         status = new TextView(this);
-        status.setText("Ready. IMPORTANT: do not open Smart Life, power-cycle, or re-pair the bulb before this test. Start with TEST A and wait 4 seconds between buttons.");
+        status.setText("Do not open Smart Life. Tap RESYNC once and let it finish (~28 seconds).");
         status.setGravity(Gravity.CENTER);
         status.setTextSize(14f);
         status.setTextIsSelectable(true);
@@ -139,7 +142,7 @@ public class MainActivity extends Activity {
         root.addView(status, statusLp);
 
         TextView note = new TextView(this);
-        note.setText("If TEST A at sequence 42 works, it proves the encrypted command body can be reused while only the outer sequence and CRC advance. Each press automatically uses the next sequence.");
+        note.setText("During RESYNC the bulb may turn red part-way through. Do not press anything until the app says RESYNC COMPLETE.");
         note.setGravity(Gravity.CENTER);
         note.setTextSize(13f);
         LinearLayout.LayoutParams noteLp = new LinearLayout.LayoutParams(-1, -2);
@@ -149,11 +152,117 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
-    private Button makeButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextSize(16f);
-        return button;
+    private void startResync() {
+        if (!prepareBluetooth()) return;
+        if (resyncRunning) return;
+        resyncRunning = true;
+        setButtonsEnabled(false);
+        status.setText("Starting RESYNC at sequence 45...");
+        resyncStep(RESYNC_START);
+    }
+
+    private void resyncStep(int seq) {
+        if (!resyncRunning) return;
+
+        if (seq > RESYNC_END) {
+            stopAdvertisersOnly();
+            resyncRunning = false;
+            sequence = 0x64;
+            updateSequenceView();
+            setButtonsEnabled(true);
+            status.setText("RESYNC COMPLETE.\nNext sequence: 64\nNow press BLUE once.");
+            return;
+        }
+
+        stopAdvertisersOnly();
+
+        currentName = "RESYNC RED";
+        currentSeq = seq & 0xFF;
+        byte[] serviceBytes = buildServiceBytes(currentSeq, BODY_RED);
+        currentPacket = toHex(serviceBytes);
+        startedCount = 0;
+        failedCount = 0;
+
+        AdvertiseData data = buildAdvertiseData(serviceBytes);
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(true)
+                .setTimeout(RESYNC_ADV_MS)
+                .build();
+
+        status.setText(String.format(Locale.US,
+                "RESYNC %02X / %02X\nDo not touch anything...", currentSeq, RESYNC_END));
+
+        startOne(settings, data, 1, false);
+        handler.postDelayed(() -> startOne(settings, data, 2, false), 20);
+        handler.postDelayed(() -> resyncStep(seq + 1), RESYNC_STEP_MS);
+    }
+
+    private void sendNormal(String name, byte[] body) {
+        if (resyncRunning) {
+            status.setText("Wait for RESYNC to finish first.");
+            return;
+        }
+        if (!prepareBluetooth()) return;
+
+        stopAdvertisersOnly();
+        currentName = name;
+        currentSeq = sequence & 0xFF;
+        byte[] serviceBytes = buildServiceBytes(currentSeq, body);
+        currentPacket = toHex(serviceBytes);
+        startedCount = 0;
+        failedCount = 0;
+
+        AdvertiseData data = buildAdvertiseData(serviceBytes);
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+                .setConnectable(true)
+                .setTimeout(3000)
+                .build();
+
+        status.setText(String.format(Locale.US,
+                "%s seq %02X: starting...", currentName, currentSeq));
+
+        startOne(settings, data, 1, true);
+        handler.postDelayed(() -> startOne(settings, data, 2, true), 20);
+
+        sequence = (sequence + 1) & 0xFF;
+        updateSequenceView();
+    }
+
+    private boolean prepareBluetooth() {
+        if (!hasBtPermissions()) {
+            requestBtPermissions();
+            status.setText("Allow Nearby devices / Bluetooth permission first.");
+            return false;
+        }
+        if (adapter == null) {
+            status.setText("No Bluetooth adapter found.");
+            return false;
+        }
+        try {
+            if (!adapter.isEnabled()) {
+                status.setText("Turn Bluetooth on first.");
+                return false;
+            }
+            advertiser = adapter.getBluetoothLeAdvertiser();
+        } catch (SecurityException e) {
+            status.setText("Bluetooth permission error: " + e.getMessage());
+            return false;
+        }
+        if (advertiser == null) {
+            status.setText("BLE advertising is unavailable on this phone.");
+            return false;
+        }
+        return true;
+    }
+
+    private void setButtonsEnabled(boolean enabled) {
+        resyncButton.setEnabled(enabled);
+        redButton.setEnabled(enabled);
+        blueButton.setEnabled(enabled);
     }
 
     private void requestBtPermissions() {
@@ -173,62 +282,7 @@ public class MainActivity extends Activity {
                  checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED);
     }
 
-    private void sendFresh(String name, byte[] body) {
-        if (!hasBtPermissions()) {
-            requestBtPermissions();
-            status.setText("Allow Nearby devices / Bluetooth permission first.");
-            return;
-        }
-        if (adapter == null) {
-            status.setText("No Bluetooth adapter found.");
-            return;
-        }
-        try {
-            if (!adapter.isEnabled()) {
-                status.setText("Turn Bluetooth on first.");
-                return;
-            }
-            advertiser = adapter.getBluetoothLeAdvertiser();
-        } catch (SecurityException e) {
-            status.setText("Bluetooth permission error: " + e.getMessage());
-            return;
-        }
-        if (advertiser == null) {
-            status.setText("BLE advertising is unavailable on this phone.");
-            return;
-        }
-
-        stopActive();
-
-        currentName = name;
-        currentSeq = sequence & 0xFF;
-        byte[] serviceBytes = buildServiceBytes(currentSeq, body);
-        currentPacket = toHex(serviceBytes);
-        startedCount = 0;
-        failedCount = 0;
-
-        AdvertiseData data = buildAdvertiseData(serviceBytes);
-        AdvertiseSettings settings = new AdvertiseSettings.Builder()
-                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                .setConnectable(true)
-                .setTimeout(3000)
-                .build();
-
-        status.setText(String.format(Locale.US,
-                "%s using seq %02X: starting 2 advertisers...\n%s",
-                currentName, currentSeq, currentPacket));
-
-        startOne(settings, data, 1);
-        handler.postDelayed(() -> startOne(settings, data, 2), 20);
-
-        sequence = (sequence + 1) & 0xFF;
-        getPreferences(MODE_PRIVATE).edit().putInt("sequence_v04", sequence).apply();
-        updateSequenceView();
-    }
-
     private static byte[] buildServiceBytes(int seq, byte[] body) {
-        if (body.length != 17) throw new IllegalArgumentException("Body must be 17 bytes");
         byte[] out = new byte[26];
         System.arraycopy(PREFIX, 0, out, 0, PREFIX.length);
         out[6] = (byte) seq;
@@ -242,9 +296,8 @@ public class MainActivity extends Activity {
         int crc = 0;
         for (int i = 0; i < len; i++) {
             crc ^= data[i] & 0xFF;
-            for (int bit = 0; bit < 8; bit++) {
+            for (int bit = 0; bit < 8; bit++)
                 crc = (crc & 0x80) != 0 ? ((crc << 1) ^ 0x07) & 0xFF : (crc << 1) & 0xFF;
-            }
         }
         return crc;
     }
@@ -262,18 +315,21 @@ public class MainActivity extends Activity {
         return data.build();
     }
 
-    private void startOne(AdvertiseSettings settings, AdvertiseData data, int number) {
+    private void startOne(AdvertiseSettings settings, AdvertiseData data, int number, boolean showResult) {
         if (advertiser == null) return;
         AdvertiseCallback cb = new AdvertiseCallback() {
             @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
                 startedCount++;
-                updateResult();
+                if (showResult) updateResult();
             }
+
             @Override public void onStartFailure(int errorCode) {
                 failedCount++;
-                status.setText(String.format(Locale.US,
-                        "%s seq %02X: advertiser %d failed (error %d), started %d/2\n%s",
-                        currentName, currentSeq, number, errorCode, startedCount, currentPacket));
+                if (showResult) {
+                    status.setText(String.format(Locale.US,
+                            "%s seq %02X: advertiser %d failed (error %d), started %d/2\n%s",
+                            currentName, currentSeq, number, errorCode, startedCount, currentPacket));
+                }
             }
         };
         callbacks.add(cb);
@@ -281,7 +337,7 @@ public class MainActivity extends Activity {
             advertiser.startAdvertising(settings, data, cb);
         } catch (Exception e) {
             failedCount++;
-            status.setText("Could not start advertiser " + number + ": " + e.getMessage());
+            if (showResult) status.setText("Could not start advertiser " + number + ": " + e.getMessage());
         }
     }
 
@@ -298,8 +354,7 @@ public class MainActivity extends Activity {
             seqView.setText(String.format(Locale.US, "Next sequence: %02X", sequence & 0xFF));
     }
 
-    private void stopActive() {
-        handler.removeCallbacksAndMessages(null);
+    private void stopAdvertisersOnly() {
         if (advertiser != null && hasBtPermissions()) {
             for (AdvertiseCallback cb : callbacks) {
                 try { advertiser.stopAdvertising(cb); } catch (Exception ignored) {}
@@ -308,8 +363,14 @@ public class MainActivity extends Activity {
         callbacks.clear();
     }
 
+    private void stopEverything() {
+        resyncRunning = false;
+        handler.removeCallbacksAndMessages(null);
+        stopAdvertisersOnly();
+    }
+
     @Override protected void onDestroy() {
-        stopActive();
+        stopEverything();
         super.onDestroy();
     }
 
