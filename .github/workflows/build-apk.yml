@@ -5,6 +5,7 @@ on:
     branches:
       - main
 
+# v0.5 sequence re-sync diagnostic build
 jobs:
   build:
     runs-on: ubuntu-latest
