@@ -15,11 +15,25 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Restore stable debug signing key
+      - name: Restore stable Sudoku signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: pete-sudoku-debug-keystore-v1
+          path: sudoku-app/.signing/pete-sudoku.keystore
+          key: pete-sudoku-signing-keystore-v2
+      - name: Create signing key if missing
+        run: |
+          mkdir -p sudoku-app/.signing
+          if [ ! -f sudoku-app/.signing/pete-sudoku.keystore ]; then
+            keytool -genkeypair \
+              -keystore sudoku-app/.signing/pete-sudoku.keystore \
+              -storepass pete-sudoku-2026 \
+              -keypass pete-sudoku-2026 \
+              -alias pete-sudoku \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Pete Sudoku,O=Pete Sudoku,C=ZA"
+          fi
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
