@@ -41,10 +41,8 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                String js = readAssetText("upgrade-v23.js");
-                if (js != null && !js.isEmpty()) {
-                    view.evaluateJavascript(js, null);
-                }
+                String js = readAssetText("upgrade-v24.js");
+                if (js != null && !js.isEmpty()) view.evaluateJavascript(js, null);
             }
         });
 
@@ -57,9 +55,7 @@ public class MainActivity extends Activity {
              ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[4096];
             int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
-            }
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
             return out.toString(StandardCharsets.UTF_8.name());
         } catch (Exception e) {
             return null;
@@ -81,10 +77,7 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 }
