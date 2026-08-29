@@ -1,1 +1,0 @@
-Pete Sudoku v2.3 packaging test marker
