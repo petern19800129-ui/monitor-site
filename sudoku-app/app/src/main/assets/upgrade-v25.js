@@ -15,6 +15,7 @@
   var prefs = v24.prefs;
   var paintPending = false;
   var clearingNotes = false;
+  var barActive = 0;
 
   function say(t){
     if (!msg) return;
@@ -42,6 +43,7 @@
 
   function activeNumber(){
     if (prefs.numberFirst && prefs.locked >= 1 && prefs.locked <= 9) return prefs.locked;
+    if (barActive >= 1 && barActive <= 9) return barActive;
     var selected = board.querySelector('.cell.selected');
     return directCellNumber(selected);
   }
@@ -92,9 +94,6 @@
       sessionStorage.setItem('peteSudokuV25Message', 'Fast Pencil OFF — '+cleared+' note cells cleared');
     } catch(e) {}
 
-    // Each erase saves the live game state synchronously. Reloading resets the
-    // temporary undo entries created while clearing and proves the saved notes
-    // are actually gone rather than merely hidden in the DOM.
     setTimeout(function(){ location.reload(); }, 30);
   }
 
@@ -103,16 +102,34 @@
   document.head.appendChild(style);
 
   fastToggle.addEventListener('change', function(){
-    if (!fastToggle.checked) {
-      setTimeout(clearLiveNotes, 0);
-    } else {
-      schedulePaint();
-    }
+    if (!fastToggle.checked) setTimeout(clearLiveNotes, 0);
+    else schedulePaint();
   });
 
-  board.addEventListener('click', function(){ setTimeout(schedulePaint, 0); }, false);
-  pad.addEventListener('click', function(){ setTimeout(schedulePaint, 0); }, false);
-  if (numberToggle) numberToggle.addEventListener('change', function(){ setTimeout(schedulePaint, 0); }, false);
+  // Capture number-bar taps before the game's normal input handler runs.
+  // This makes color highlighting work whether Number First is ON or OFF.
+  pad.addEventListener('click', function(e){
+    var btn = e.target.closest('.num');
+    if (!btn) return;
+    var nums = Array.prototype.slice.call(pad.querySelectorAll('.num'));
+    var n = nums.indexOf(btn) + 1;
+    if (n >= 1 && n <= 9) barActive = n;
+    setTimeout(schedulePaint, 0);
+  }, true);
+
+  // A filled board cell becomes the active color number. Empty cells leave the
+  // last number-bar selection active, which is useful for repeated entry.
+  board.addEventListener('click', function(e){
+    var cell = e.target.closest('.cell');
+    var n = directCellNumber(cell);
+    if (n >= 1 && n <= 9 && !prefs.numberFirst) barActive = n;
+    setTimeout(schedulePaint, 0);
+  }, false);
+
+  if (numberToggle) numberToggle.addEventListener('change', function(){
+    if (!numberToggle.checked && prefs.locked >= 1 && prefs.locked <= 9) barActive = prefs.locked;
+    setTimeout(schedulePaint, 0);
+  }, false);
 
   var observer = new MutationObserver(function(){ schedulePaint(); });
   observer.observe(board, {childList:true, subtree:true});
@@ -125,5 +142,10 @@
   if (pending) setTimeout(function(){ say(pending); }, 120);
 
   repaint();
-  window.__sudokuV25 = {activeNumber:activeNumber, repaint:repaint, clearLiveNotes:clearLiveNotes};
+  window.__sudokuV25 = {
+    activeNumber:activeNumber,
+    repaint:repaint,
+    clearLiveNotes:clearLiveNotes,
+    setBarActive:function(n){ barActive=Number(n)||0; schedulePaint(); }
+  };
 })();
