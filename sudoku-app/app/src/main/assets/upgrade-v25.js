@@ -8,17 +8,23 @@
   var fastToggle = document.getElementById('fastPencilToggle');
   var numberToggle = document.getElementById('numberFirstToggle');
   var msg = document.getElementById('message');
+  var erase = document.getElementById('erase');
   var v24 = window.__sudokuV24;
-  if (!board || !pad || !fastToggle || !v24 || !v24.prefs) return;
+  if (!board || !pad || !fastToggle || !erase || !v24 || !v24.prefs) return;
 
   var prefs = v24.prefs;
   var paintPending = false;
+  var clearingNotes = false;
 
   function say(t){
     if (!msg) return;
     msg.textContent = t;
     clearTimeout(window.__peteV25MsgTimer);
     window.__peteV25MsgTimer = setTimeout(function(){ if (msg.textContent === t) msg.textContent = ''; }, 2300);
+  }
+
+  function hapticBulk(v){
+    try { if (window.Android && Android.setBulk) Android.setBulk(!!v); } catch(e) {}
   }
 
   function directCellNumber(cell){
@@ -59,22 +65,37 @@
   }
 
   function schedulePaint(){
-    if (paintPending) return;
+    if (paintPending || clearingNotes) return;
     paintPending = true;
     setTimeout(repaint, 0);
   }
 
-  function clearStoredNotesAndReload(){
+  function clearLiveNotes(){
+    if (clearingNotes) return;
+    clearingNotes = true;
+    hapticBulk(true);
+    var cleared = 0;
     try {
-      var raw = localStorage.getItem('peteSudokuV2');
-      if (raw) {
-        var state = JSON.parse(raw);
-        state.notes = Array.from({length:81}, function(){ return []; });
-        localStorage.setItem('peteSudokuV2', JSON.stringify(state));
+      for (var idx=0; idx<81; idx++) {
+        var cells = board.querySelectorAll('.cell');
+        var cell = cells[idx];
+        if (!cell || !cell.querySelector('.notes')) continue;
+        cell.click();
+        erase.click();
+        cleared++;
       }
-      sessionStorage.setItem('peteSudokuV25Message', 'Fast Pencil OFF — notes cleared');
+    } finally {
+      hapticBulk(false);
+    }
+
+    try {
+      sessionStorage.setItem('peteSudokuV25Message', 'Fast Pencil OFF — '+cleared+' note cells cleared');
     } catch(e) {}
-    location.reload();
+
+    // Each erase saves the live game state synchronously. Reloading resets the
+    // temporary undo entries created while clearing and proves the saved notes
+    // are actually gone rather than merely hidden in the DOM.
+    setTimeout(function(){ location.reload(); }, 30);
   }
 
   var style = document.createElement('style');
@@ -83,7 +104,7 @@
 
   fastToggle.addEventListener('change', function(){
     if (!fastToggle.checked) {
-      setTimeout(clearStoredNotesAndReload, 0);
+      setTimeout(clearLiveNotes, 0);
     } else {
       schedulePaint();
     }
@@ -104,5 +125,5 @@
   if (pending) setTimeout(function(){ say(pending); }, 120);
 
   repaint();
-  window.__sudokuV25 = {activeNumber:activeNumber, repaint:repaint};
+  window.__sudokuV25 = {activeNumber:activeNumber, repaint:repaint, clearLiveNotes:clearLiveNotes};
 })();
