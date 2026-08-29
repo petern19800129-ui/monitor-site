@@ -41,8 +41,15 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                String js = readAssetText("upgrade-v24.js");
-                if (js != null && !js.isEmpty()) view.evaluateJavascript(js, null);
+                String js24 = readAssetText("upgrade-v24.js");
+                String js25 = readAssetText("upgrade-v25.js");
+                if (js24 != null && !js24.isEmpty()) {
+                    view.evaluateJavascript(js24, value -> {
+                        if (js25 != null && !js25.isEmpty()) view.evaluateJavascript(js25, null);
+                    });
+                } else if (js25 != null && !js25.isEmpty()) {
+                    view.evaluateJavascript(js25, null);
+                }
             }
         });
 
