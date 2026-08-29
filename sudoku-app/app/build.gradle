@@ -6,11 +6,26 @@ android {
     namespace 'com.pete.sudoku'
     compileSdk 35
 
+    signingConfigs {
+        stableDebug {
+            storeFile file('../.signing/pete-sudoku.keystore')
+            storePassword 'pete-sudoku-2026'
+            keyAlias 'pete-sudoku'
+            keyPassword 'pete-sudoku-2026'
+        }
+    }
+
     defaultConfig {
         applicationId 'com.pete.sudoku'
         minSdk 23
         targetSdk 35
         versionCode 7
         versionName '2.5'
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.stableDebug
+        }
     }
 }
